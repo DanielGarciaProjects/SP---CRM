@@ -72,8 +72,8 @@ dialog::backdrop{background:#000a}
 <script>
 // ===== CONFIGURAÇÃO (é só isto que muda de um negócio para outro) =====
 const CFG = {
-  url: 'COLE_AQUI_A_URL_DO_SUPABASE',      // Supabase > Project Settings > API > Project URL
-  key: 'COLE_AQUI_A_ANON_KEY',             // a chave "anon public" (NUNCA use a service_role aqui)
+  url: 'https://iipfdbpcovhgkmutwlky.supabase.co',      // Supabase > Project Settings > API > Project URL
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpcGZkYnBjb3ZoZ2ttdXR3bGt5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1NDk2MzIsImV4cCI6MjEwODEyNTYzMn0.vXsfJRwZVfFMvTstVRZC5KMvJXc_BW771bFVPGiy-Pg',             // a chave "anon public" (NUNCA use a service_role aqui)
   stages: [['novo','Novo'],['conversando','Conversando'],['orcamento','Orçamento'],['sinal','Sinal pago'],['agendado','Agendado'],['feito','Feito'],['perdido','Perdido']],
   won: ['sinal','agendado','feito'],       // etapas que contam como conversão
   sources: [['site','Site'],['instagram','Instagram'],['google','Google Meu Negócio'],['anuncio','Anúncio'],['indicacao','Indicação'],['whatsapp','WhatsApp direto'],['outro','Outro']],
@@ -82,6 +82,10 @@ const CFG = {
   apStatus: ['agendado','confirmado','feito','faltou','cancelado']
 };
 // ======================================================================
+if (!CFG.url.startsWith('https://') || CFG.key.startsWith('COLE')) {
+  document.body.innerHTML = '<p style="padding:40px;max-width:560px;line-height:1.6">Falta configurar o CRM. Abra o index.html em um editor de texto, cole a URL e a chave do Supabase dentro das aspas de <b>url</b> e <b>key</b> (no começo do script), salve e abra de novo.</p>';
+  throw new Error('CRM sem configuração');
+}
 const sb = supabase.createClient(CFG.url, CFG.key);
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -96,7 +100,10 @@ async function boot() {
 $('#login').onsubmit = async e => {
   e.preventDefault();
   const { error } = await sb.auth.signInWithPassword({ email: $('#em').value, password: $('#pw').value });
-  if (error) { $('#msg').textContent = 'E-mail ou senha incorretos.'; return; }
+  if (error) {
+    $('#msg').textContent = /invalid login/i.test(error.message) ? 'E-mail ou senha incorretos.' : 'Não foi possível entrar: ' + error.message;
+    return;
+  }
   $('#login').hidden = true; start();
 };
 $('#sair').onclick = async () => { await sb.auth.signOut(); location.reload(); };
