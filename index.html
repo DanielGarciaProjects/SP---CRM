@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>CRM Still Point</title>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#0d0f0c;--panel:#161a15;--line:#2a3128;--pine:#25392f;--brass:#b3915f;--paper:#efe9db;--dim:#a9a592;--bad:#d9705f}
+*{box-sizing:border-box;margin:0}
+body{background:var(--ink);color:var(--paper);font:15px/1.5 system-ui,sans-serif}
+h1,h2,h3{font-family:'Big Shoulders Display',sans-serif;letter-spacing:.02em}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{width:100%;background:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px 10px}
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:4px;padding:8px 14px}
+button.pri{background:var(--brass);border-color:var(--brass);color:var(--ink);font-weight:600}
+button.del{color:var(--bad)}
+label{display:block;font-size:13px;color:var(--dim);margin:10px 0 3px}
+#login{max-width:340px;margin:12vh auto;padding:24px}
+#login h1{font-size:40px;margin-bottom:12px}
+#msg{color:var(--bad);margin-top:10px;font-size:14px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line)}
+header h1{font-size:26px;margin-right:auto}
+nav{display:flex;gap:4px}
+nav button{border-color:transparent;background:none;color:var(--dim)}
+nav button.on{color:var(--paper);border-bottom:2px solid var(--brass);border-radius:0}
+main{padding:20px}
+.board{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:12px}
+.col{flex:0 0 240px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;min-height:140px}
+.col h3{font-size:20px;display:flex;justify-content:space-between;margin-bottom:8px}
+.col h3 span{color:var(--brass)}
+.card{background:var(--ink);border:1px solid var(--line);border-left:3px solid var(--pine);border-radius:4px;padding:9px 10px;margin-bottom:8px;cursor:grab}
+.card small{display:block;color:var(--dim)}
+.card .fu{color:var(--brass)}
+.over{outline:2px dashed var(--brass)}
+dialog{background:var(--panel);color:var(--paper);border:1px solid var(--line);border-radius:8px;padding:22px;width:min(560px,94vw);max-height:92vh}
+dialog::backdrop{background:#000a}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.note{border-top:1px solid var(--line);padding:6px 0;font-size:14px}
+.note small{color:var(--dim)}
+.day{margin:18px 0 6px;font-size:22px}
+.ap{display:grid;grid-template-columns:60px 1fr 140px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.kpi{display:flex;gap:28px;margin-bottom:20px;flex-wrap:wrap}
+.kpi b{font:800 40px 'Big Shoulders Display';display:block;color:var(--brass)}
+.bar{height:8px;background:var(--pine);border-radius:4px;margin-top:4px}
+.empty{color:var(--dim);padding:20px 0}
+@media (max-width:600px){.ap{grid-template-columns:50px 1fr}.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<form id="login" hidden>
+  <h1>CRM Still Point</h1>
+  <label for="em">E-mail</label><input id="em" type="email" required autocomplete="username">
+  <label for="pw">Senha</label><input id="pw" type="password" required autocomplete="current-password">
+  <div class="acts"><button class="pri">Entrar</button></div>
+  <p id="msg" role="alert"></p>
+</form>
+<div id="app" hidden>
+  <header>
+    <h1>CRM Still Point</h1>
+    <nav><button data-t="funil" class="on">Funil</button><button data-t="agenda">Agenda</button><button data-t="painel">Painel</button></nav>
+    <button class="pri" id="novo">Novo lead</button><button id="sair">Sair</button>
+  </header>
+  <main id="v"></main>
+</div>
+<dialog id="dlg"></dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ===== CONFIGURAÇÃO (é só isto que muda de um negócio para outro) =====
+const CFG = {
+  url: 'COLE_AQUI_A_URL_DO_SUPABASE',      // Supabase > Project Settings > API > Project URL
+  key: 'COLE_AQUI_A_ANON_KEY',             // a chave "anon public" (NUNCA use a service_role aqui)
+  stages: [['novo','Novo'],['conversando','Conversando'],['orcamento','Orçamento'],['sinal','Sinal pago'],['agendado','Agendado'],['feito','Feito'],['perdido','Perdido']],
+  won: ['sinal','agendado','feito'],       // etapas que contam como conversão
+  sources: [['site','Site'],['instagram','Instagram'],['google','Google Meu Negócio'],['anuncio','Anúncio'],['indicacao','Indicação'],['whatsapp','WhatsApp direto'],['outro','Outro']],
+  professionals: ['Daniel Garcia','Aaron Abrego','Troper Art'],
+  fields: [['regiao','Região do corpo'],['tamanho','Tamanho (cm)'],['ideia','Ideia da tatuagem']],
+  apStatus: ['agendado','confirmado','feito','faltou','cancelado']
+};
+// ======================================================================
+const sb = supabase.createClient(CFG.url, CFG.key);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nm = (list, k) => (list.find(x => x[0] === k) || [k, k])[1];
+const opts = (list, cur, blank) => (blank ? '<option value="">—</option>' : '') + list.map(x => { const [v, t] = Array.isArray(x) ? x : [x, x]; return `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(t)}</option>`; }).join('');
+let leads = [], appts = [], tab = 'funil';
+
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  session ? start() : ($('#login').hidden = false);
+}
+$('#login').onsubmit = async e => {
+  e.preventDefault();
+  const { error } = await sb.auth.signInWithPassword({ email: $('#em').value, password: $('#pw').value });
+  if (error) { $('#msg').textContent = 'E-mail ou senha incorretos.'; return; }
+  $('#login').hidden = true; start();
+};
+$('#sair').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  tab = b.dataset.t; document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b)); render();
+});
+$('#novo').onclick = () => openLead(null);
+
+async function start() {
+  $('#app').hidden = false;
+  const { data: me } = await sb.from('staff').select('user_id').maybeSingle();
+  if (!me) { $('#v').innerHTML = '<p class="empty">Seu usuário ainda não faz parte da equipe. Rode o comando de cadastro que está no fim do arquivo schema.sql.</p>'; return; }
+  await load();
+}
+async function load() {
+  const [l, a] = await Promise.all([
+    sb.from('leads').select('*').order('created_at', { ascending: false }),
+    sb.from('appointments').select('*').order('starts_at')
+  ]);
+  if (l.error || a.error) { $('#v').innerHTML = '<p class="empty">Não foi possível carregar os dados. Confira a URL e a chave no topo do código.</p>'; return; }
+  leads = l.data; appts = a.data; render();
+}
+function render() { ({ funil: board, agenda, painel })[tab](); }
+
+function board() {
+  $('#v').innerHTML = '<div class="board">' + CFG.stages.map(([k, n]) => {
+    const L = leads.filter(x => x.stage === k);
+    return `<section class="col" data-s="${k}"><h3>${n}<span>${L.length}</span></h3>${L.map(x => `<article class="card" draggable="true" data-id="${x.id}"><b>${esc(x.name)}</b><small>${esc(nm(CFG.sources, x.source))}</small>${x.details?.regiao ? `<small>${esc(x.details.regiao)}</small>` : ''}${x.next_followup ? `<small class="fu">Retornar em ${new Date(x.next_followup + 'T12:00').toLocaleDateString('pt-BR')}</small>` : ''}</article>`).join('')}</section>`;
+  }).join('') + '</div>';
+  document.querySelectorAll('.card').forEach(c => {
+    c.onclick = () => openLead(c.dataset.id);
+    c.ondragstart = e => e.dataTransfer.setData('id', c.dataset.id);
+  });
+  document.querySelectorAll('.col').forEach(c => {
+    c.ondragover = e => { e.preventDefault(); c.classList.add('over'); };
+    c.ondragleave = () => c.classList.remove('over');
+    c.ondrop = async e => {
+      e.preventDefault(); c.classList.remove('over');
+      const id = e.dataTransfer.getData('id'), l = leads.find(x => x.id === id);
+      if (!l || l.stage === c.dataset.s) return;
+      l.stage = c.dataset.s; board();
+      const { error } = await sb.from('leads').update({ stage: l.stage }).eq('id', id);
+      if (error) { alert('Não foi possível mover o lead.'); load(); }
+    };
+  });
+}
+
+function agenda() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const L = appts.filter(a => new Date(a.starts_at) >= today);
+  if (!L.length) { $('#v').innerHTML = '<p class="empty">Nenhum atendimento marcado. Abra um lead e use "Agendar".</p>'; return; }
+  let day = '', h = '';
+  L.forEach(a => {
+    const d = new Date(a.starts_at), dk = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+    if (dk !== day) { day = dk; h += `<h2 class="day">${esc(dk)}</h2>`; }
+    const l = leads.find(x => x.id === a.lead_id);
+    h += `<div class="ap"><b>${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</b><div>${esc(l?.name || 'Lead removido')}<small style="display:block;color:var(--dim)">${esc(a.professional || '')} ${esc(a.service || '')}</small></div><select data-ap="${a.id}">${opts(CFG.apStatus, a.status)}</select></div>`;
+  });
+  $('#v').innerHTML = h;
+  document.querySelectorAll('[data-ap]').forEach(s => s.onchange = async () => {
+    await sb.from('appointments').update({ status: s.value }).eq('id', s.dataset.ap); load();
+  });
+}
+
+function painel() {
+  const won = l => CFG.won.includes(l.stage), t = leads.length, w = leads.filter(won).length;
+  const src = CFG.sources.map(([k, n]) => { const L = leads.filter(x => x.source === k); return [n, L.length, L.filter(won).length]; }).filter(x => x[1]);
+  const max = Math.max(1, ...src.map(x => x[1]));
+  $('#v').innerHTML = `<div class="kpi"><div><b>${t}</b>leads no total</div><div><b>${w}</b>com sinal, agendados ou feitos</div><div><b>${t ? Math.round(100 * w / t) : 0}%</b>de conversão</div></div>
+  <h2>De onde vêm os clientes</h2>${src.length ? src.map(([n, c, v]) => `<div style="margin:12px 0;max-width:520px">${esc(n)}: ${c} leads, ${v} convertidos (${Math.round(100 * v / c)}%)<div class="bar" style="width:${100 * c / max}%"></div></div>`).join('') : '<p class="empty">Os números aparecem quando houver leads.</p>'}`;
+}
+
+async function openLead(id) {
+  const l = leads.find(x => x.id === id) || { details: {}, stage: 'novo', source: 'whatsapp' };
+  const d = $('#dlg');
+  d.innerHTML = `<form id="lf"><h2>${id ? esc(l.name) : 'Novo lead'}</h2>
+  <label>Nome</label><input name="name" required maxlength="120" value="${esc(l.name)}">
+  <div class="row"><div><label>Telefone</label><input name="phone" value="${esc(l.phone)}"></div><div><label>E-mail</label><input name="email" type="email" value="${esc(l.email)}"></div></div>
+  <div class="row"><div><label>Origem</label><select name="source">${opts(CFG.sources, l.source)}</select></div><div><label>Etapa</label><select name="stage">${opts(CFG.stages, l.stage)}</select></div></div>
+  <div class="row"><div><label>Profissional</label><select name="professional">${opts(CFG.professionals, l.professional, 1)}</select></div><div><label>Valor orçado (R$)</label><input name="quoted_value" type="number" step="0.01" value="${l.quoted_value ?? ''}"></div></div>
+  <div class="row"><div><label>Retornar em</label><input name="next_followup" type="date" value="${l.next_followup || ''}"></div><div><label>Sinal</label><select name="deposit_paid"><option value="false">Não pago</option><option value="true" ${l.deposit_paid ? 'selected' : ''}>Pago</option></select></div></div>
+  ${CFG.fields.map(([k, n]) => `<label>${esc(n)}</label><input data-f="${k}" value="${esc(l.details[k])}">`).join('')}
+  <div class="acts"><button class="pri">Salvar</button>${l.phone ? `<button type="button" id="wa">Abrir WhatsApp</button>` : ''}${id ? '<button type="button" class="del" id="rm">Excluir</button>' : ''}<button type="button" id="cl">Fechar</button></div></form>
+  ${id ? `<h3 style="margin-top:22px">Anotações</h3><div id="nt"></div><div class="row" style="margin-top:8px"><input id="nn" placeholder="Escreva uma anotação"><button id="na">Adicionar</button></div>
+  <h3 style="margin-top:22px">Agendar atendimento</h3><div class="row"><input id="ad" type="datetime-local"><select id="ap">${opts(CFG.professionals, l.professional)}</select></div><div class="row" style="margin-top:8px"><input id="as" placeholder="Serviço"><button id="ab">Agendar</button></div>` : ''}`;
+  d.showModal();
+  $('#cl').onclick = () => d.close();
+  if ($('#wa')) $('#wa').onclick = () => { let n = l.phone.replace(/\D/g, ''); if (n.length <= 11) n = '55' + n; window.open('https://wa.me/' + n); };
+  $('#lf').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target), row = Object.fromEntries(f);
+    row.deposit_paid = row.deposit_paid === 'true';
+    row.quoted_value = row.quoted_value === '' ? null : Number(row.quoted_value);
+    row.next_followup = row.next_followup || null; row.professional = row.professional || null;
+    row.details = Object.fromEntries([...d.querySelectorAll('[data-f]')].map(i => [i.dataset.f, i.value]));
+    row.consent = id ? l.consent : true;
+    const { error } = id ? await sb.from('leads').update(row).eq('id', id) : await sb.from('leads').insert(row);
+    if (error) { alert('Não foi possível salvar. Confira os campos.'); return; }
+    d.close(); load();
+  };
+  if (!id) return;
+  $('#rm').onclick = async () => { if (confirm('Excluir este lead e todo o histórico dele?')) { await sb.from('leads').delete().eq('id', id); d.close(); load(); } };
+  const notes = async () => {
+    const { data } = await sb.from('interactions').select('*').eq('lead_id', id).order('created_at', { ascending: false });
+    $('#nt').innerHTML = (data || []).map(n => `<div class="note">${esc(n.text)}<br><small>${new Date(n.created_at).toLocaleString('pt-BR')}</small></div>`).join('') || '<p class="empty">Nenhuma anotação ainda.</p>';
+  };
+  notes();
+  $('#na').onclick = async () => { const t = $('#nn').value.trim(); if (!t) return; await sb.from('interactions').insert({ lead_id: id, text: t }); $('#nn').value = ''; notes(); };
+  $('#ab').onclick = async () => {
+    if (!$('#ad').value) { alert('Escolha a data e a hora.'); return; }
+    await sb.from('appointments').insert({ lead_id: id, starts_at: new Date($('#ad').value).toISOString(), professional: $('#ap').value || null, service: $('#as').value || null });
+    $('#ad').value = ''; $('#as').value = ''; await load(); alert('Atendimento agendado. Veja na aba Agenda.');
+  };
+}
+boot();
+</script>
+</body>
+</html>
