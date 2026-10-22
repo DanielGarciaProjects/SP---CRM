@@ -24,7 +24,11 @@ label{display:block;font-size:13px;color:var(--dim);margin:10px 0 3px}
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px;margin-right:auto;color:inherit;text-decoration:none}
 header h1{font-size:26px}
-.go{cursor:pointer}.ap.two{grid-template-columns:140px 1fr}
+.go,.fn div{cursor:pointer}
+.sd{color:var(--dim);font-size:12px;line-height:1.35;margin:-4px 0 10px}
+.fn{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.fn div{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 14px;min-width:96px}
+.fn b{display:block;font:800 26px 'Big Shoulders Display';color:var(--brass)}.ap.two{grid-template-columns:140px 1fr}
 .lg{width:36px;height:36px;object-fit:contain}
 .lgb{width:84px;height:84px;object-fit:contain;margin-bottom:8px}
 nav{display:flex;gap:4px}
@@ -81,7 +85,15 @@ dialog::backdrop{background:#000a}
 const CFG = {
   url: (window.SUPA || {}).url || '',   // vem do arquivo config.js
   key: (window.SUPA || {}).key || '',
-  stages: [['novo','Novo'],['conversando','Conversando'],['orcamento','Orçamento'],['sinal','Sinal pago'],['agendado','Agendado'],['feito','Feito'],['perdido','Perdido']],
+  stages: [
+    ['novo','Novo','Chegou e ainda não foi respondido.'],
+    ['conversando','Conversando','Já houve resposta: estão trocando mensagens (ideia, referências, dúvidas).'],
+    ['orcamento','Orçamento','Valor enviado, aguardando o cliente decidir.'],
+    ['sinal','Sinal pago','Sinal recebido; falta combinar dia e hora.'],
+    ['agendado','Agendado','Dia e hora definidos (use "Agendar atendimento").'],
+    ['feito','Feito','Tatuagem realizada.'],
+    ['perdido','Perdido','Desistiu ou parou de responder.']],
+  paidStage: 'sinal', beforePaid: ['novo','conversando','orcamento'],  // marcar sinal como pago leva o lead para a etapa de sinal
   won: ['sinal','agendado','feito'],       // etapas que contam como conversão
   sources: [['site','Site'],['instagram','Instagram'],['google','Google Meu Negócio'],['anuncio','Anúncio'],['indicacao','Indicação'],['whatsapp','WhatsApp direto'],['outro','Outro']],
   professionals: ['Daniel Garcia','Aaron Abrego','Troper Art'],
@@ -139,9 +151,9 @@ async function load() {
 function render() { ({ funil: board, agenda, painel })[tab](); }
 
 function board() {
-  $('#v').innerHTML = '<div class="board">' + CFG.stages.map(([k, n]) => {
+  $('#v').innerHTML = '<div class="board">' + CFG.stages.map(([k, n, d]) => {
     const L = leads.filter(x => x.stage === k);
-    return `<section class="col" data-s="${k}"><h3>${n}<span>${L.length}</span></h3>${L.map(x => `<article class="card" draggable="true" data-id="${x.id}"><b>${esc(x.name)}</b><small>${esc(nm(CFG.sources, x.source))}</small>${x.details?.regiao ? `<small>${esc(x.details.regiao)}</small>` : ''}${x.next_followup ? `<small class="fu">Retornar em ${new Date(x.next_followup + 'T12:00').toLocaleDateString('pt-BR')}</small>` : ''}</article>`).join('')}</section>`;
+    return `<section class="col" data-s="${k}"><h3>${n}<span>${L.length}</span></h3><p class="sd">${esc(d)}</p>${L.map(x => `<article class="card" draggable="true" data-id="${x.id}"><b>${esc(x.name)}</b><small>${esc(nm(CFG.sources, x.source))}</small>${x.details?.regiao ? `<small>${esc(x.details.regiao)}</small>` : ''}${x.next_followup ? `<small class="fu">Retornar em ${new Date(x.next_followup + 'T12:00').toLocaleDateString('pt-BR')}</small>` : ''}</article>`).join('')}</section>`;
   }).join('') + '</div>';
   document.querySelectorAll('.card').forEach(c => {
     c.onclick = () => openLead(c.dataset.id);
@@ -155,7 +167,8 @@ function board() {
       const id = e.dataTransfer.getData('id'), l = leads.find(x => x.id === id);
       if (!l || l.stage === c.dataset.s) return;
       l.stage = c.dataset.s; board();
-      const { error } = await sb.from('leads').update({ stage: l.stage }).eq('id', id);
+      if (l.stage === CFG.paidStage) l.deposit_paid = true;
+      const { error } = await sb.from('leads').update(l.stage === CFG.paidStage ? { stage: l.stage, deposit_paid: true } : { stage: l.stage }).eq('id', id);
       if (error) { alert('Não foi possível mover o lead.'); load(); } else if (l.stage === 'agendado') openLead(id);
     };
   });
@@ -174,12 +187,15 @@ function agenda() {
   });
   $('#v').innerHTML = h;
   document.querySelectorAll('[data-ap]').forEach(s => s.onchange = async () => {
-    await sb.from('appointments').update({ status: s.value }).eq('id', s.dataset.ap); load();
+    await sb.from('appointments').update({ status: s.value }).eq('id', s.dataset.ap);
+    const ap = appts.find(x => x.id === s.dataset.ap);
+    if (s.value === 'feito' && ap) await sb.from('leads').update({ stage: 'feito' }).eq('id', ap.lead_id);
+    load();
   });
 }
 
 function painel() {
-  const won = l => CFG.won.includes(l.stage), t = leads.length, w = leads.filter(won).length;
+  const won = l => CFG.won.includes(l.stage), t = leads.length, w = leads.filter(won).length, by = k => leads.filter(l => l.stage === k).length;
   const fut = appts.filter(a => new Date(a.starts_at) >= new Date() && !['cancelado', 'faltou', 'feito'].includes(a.status));
   const comData = new Set(fut.map(a => a.lead_id));
   const semData = leads.filter(l => l.stage === 'agendado' && !comData.has(l.id));
@@ -188,11 +204,14 @@ function painel() {
   const prox = fut.slice(0, 8).map(a => { const l = leads.find(x => x.id === a.lead_id); return item(a.lead_id, when(a), l?.name || 'Lead removido', [a.professional, a.service].filter(Boolean).join(', ')); }).join('');
   const src = CFG.sources.map(([k, n]) => { const L = leads.filter(x => x.source === k); return [n, L.length, L.filter(won).length]; }).filter(x => x[1]);
   const max = Math.max(1, ...src.map(x => x[1]));
-  $('#v').innerHTML = `<div class="kpi"><div><b>${t}</b>leads no total</div><div><b>${fut.length}</b>atendimentos marcados</div><div><b>${t ? Math.round(100 * w / t) : 0}%</b>de conversão</div></div>
+  $('#v').innerHTML = `<div class="kpi"><div><b>${t}</b>leads no total</div><div><b>${by('conversando')}</b>conversando</div><div><b>${by('agendado')}</b>agendados</div><div><b>${leads.filter(l => l.deposit_paid || l.stage === CFG.paidStage).length}</b>com sinal pago</div><div><b>${t ? Math.round(100 * w / t) : 0}%</b>de conversão</div></div>
+  <div class="fn">${CFG.stages.map(([k, n]) => `<div data-go="1"><b>${by(k)}</b>${esc(n)}</div>`).join('')}</div>
+  <p class="empty" style="padding:8px 0 0">Conversão: clientes que chegaram a ${CFG.won.map(k => nm(CFG.stages, k)).join(', ')}, divididos pelo total de leads.</p>
   <h2>Próximos atendimentos</h2>${prox || '<p class="empty">Nenhum atendimento com data marcada.</p>'}
   ${semData.length ? `<h2 class="day">Marcados como Agendado, sem data</h2><p class="empty" style="padding:0 0 8px">Abra o cliente e use "Agendar atendimento" para escolher o dia e a hora. Aí ele entra na lista acima e na aba Agenda.</p>${semData.map(l => item(l.id, 'Sem data', l.name, l.professional)).join('')}` : ''}
   <h2 class="day">De onde vêm os clientes</h2>${src.length ? src.map(([n, c, v]) => `<div style="margin:12px 0;max-width:520px">${esc(n)}: ${c} leads, ${v} convertidos (${Math.round(100 * v / c)}%)<div class="bar" style="width:${100 * c / max}%"></div></div>`).join('') : '<p class="empty">Os números aparecem quando houver leads.</p>'}`;
   document.querySelectorAll('.go').forEach(e => e.onclick = () => openLead(e.dataset.id));
+  document.querySelectorAll('[data-go]').forEach(e => e.onclick = () => go('funil'));
 }
 
 async function openLead(id) {
@@ -215,6 +234,8 @@ async function openLead(id) {
     e.preventDefault();
     const f = new FormData(e.target), row = Object.fromEntries(f);
     row.deposit_paid = row.deposit_paid === 'true';
+    if (row.deposit_paid && CFG.beforePaid.includes(row.stage)) row.stage = CFG.paidStage;
+    if (row.stage === CFG.paidStage) row.deposit_paid = true;
     row.quoted_value = row.quoted_value === '' ? null : Number(row.quoted_value);
     row.next_followup = row.next_followup || null; row.professional = row.professional || null;
     row.details = Object.fromEntries([...d.querySelectorAll('[data-f]')].map(i => [i.dataset.f, i.value]));
@@ -234,6 +255,7 @@ async function openLead(id) {
   $('#ab').onclick = async () => {
     if (!$('#ad').value) { alert('Escolha a data e a hora.'); return; }
     await sb.from('appointments').insert({ lead_id: id, starts_at: new Date($('#ad').value).toISOString(), professional: $('#ap').value || null, service: $('#as').value || null });
+    if (['novo', 'conversando', 'orcamento', 'sinal'].includes(l.stage)) await sb.from('leads').update({ stage: 'agendado' }).eq('id', id);
     $('#ad').value = ''; $('#as').value = ''; await load(); alert('Atendimento agendado. Veja na aba Agenda.');
   };
 }
