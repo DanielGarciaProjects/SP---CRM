@@ -75,7 +75,7 @@ dialog::backdrop{background:#000a}
 <div id="app" hidden>
   <header>
     <a href="#" id="home" class="brand" title="Ir para o início"><img class="lg" src="data:," alt=""><h1>CRM Still Point</h1></a>
-    <nav><button data-t="painel" class="on">Início</button><button data-t="funil">Funil</button><button data-t="agenda">Agenda</button></nav>
+    <nav><button data-t="painel" class="on">Início</button><button data-t="funil">Funil</button><button data-t="agenda">Agenda</button><button data-t="clientes">Clientes</button></nav>
     <button class="pri" id="novo">Novo lead</button><button id="sair">Sair</button>
   </header>
   <main id="v"></main>
@@ -105,7 +105,8 @@ const CFG = {
   apStatus: ['agendado','confirmado','feito','faltou','cancelado'],
   posDays: 7,   // dias depois da sessão para lembrar da mensagem de cicatrização
   msgPos: n => `Oi, ${n}! Tudo bem? Aqui é do Still Point Tattoo. Passando para saber como está a cicatrização da sua tatuagem. Está tudo certo? Qualquer dúvida, ou se quiser mandar uma foto, estou por aqui.`,
-  msgRetorno: n => `Oi, ${n}! Tudo bem? Aqui é do Still Point Tattoo. Passando para retomar nossa conversa sobre a sua tatuagem. Ainda tem interesse em seguir?`
+  msgRetorno: n => `Oi, ${n}! Tudo bem? Aqui é do Still Point Tattoo. Passando para retomar nossa conversa sobre a sua tatuagem. Ainda tem interesse em seguir?`,
+  msgReativar: n => `Oi, ${n}! Tudo bem? Aqui é do Still Point Tattoo. Faz um tempo que você tatuou com a gente e quis saber como você está. Se pensar em uma nova tatuagem ou em um retoque, é só chamar.`
 };
 // ======================================================================
 if (!CFG.url.startsWith('https://') || CFG.key.length < 20 || CFG.key.startsWith('COLE')) {
@@ -155,19 +156,40 @@ async function load() {
   if (l.error || a.error) { $('#v').innerHTML = '<p class="empty">Não foi possível carregar os dados. Confira a URL e a chave no topo do código.</p>'; return; }
   leads = l.data; appts = a.data; render();
 }
+function clientes() {
+  const fd = s => new Date(s).toLocaleDateString('pt-BR');
+  const all = leads.map(l => {
+    const A = appts.filter(a => a.lead_id === l.id), F = A.filter(a => a.status === 'feito').sort((x, y) => y.starts_at.localeCompare(x.starts_at));
+    const nxt = A.filter(a => new Date(a.starts_at) >= new Date() && !['cancelado', 'faltou', 'feito'].includes(a.status)).sort((x, y) => x.starts_at.localeCompare(y.starts_at))[0];
+    return { l, F, nxt };
+  }).filter(x => x.F.length || x.l.stage === 'feito');
+  $('#v').innerHTML = `<h2>Clientes tatuados <span id="cn" style="color:var(--brass)"></span></h2>
+  <div class="row" style="max-width:600px;margin:10px 0"><input id="cq" placeholder="Buscar por nome, telefone ou e-mail"><select id="cm"><option value="0">Todos</option><option value="3">Sem voltar há mais de 3 meses</option><option value="6">Sem voltar há mais de 6 meses</option><option value="12">Sem voltar há mais de 12 meses</option></select></div>
+  <button id="cadv" style="margin-bottom:8px">Cadastrar cliente que já tatuou</button><div id="cl"></div>`;
+  const draw = () => {
+    const q = $('#cq').value.toLowerCase().trim(), m = Number($('#cm').value), lim = new Date(); lim.setMonth(lim.getMonth() - m);
+    const L = all.filter(x => { const last = x.F[0]?.starts_at; return (!q || [x.l.name, x.l.phone, x.l.email].join(' ').toLowerCase().includes(q)) && (!m || ((!last || new Date(last) < lim) && !x.nxt)); })
+      .sort((a, b) => (b.F[0]?.starts_at || '').localeCompare(a.F[0]?.starts_at || ''));
+    $('#cn').textContent = L.length;
+    $('#cl').innerHTML = L.map(({ l, F, nxt }) => `<div class="due"><div><b>${esc(l.name)}</b><small>${esc([l.phone, l.email].filter(Boolean).join('  |  '))}</small><small>${F.length ? 'Última sessão: ' + fd(F[0].starts_at) + ' (' + F.length + (F.length > 1 ? ' sessões' : ' sessão') + ')' : 'Sessão ainda não registrada na agenda'}</small>${nxt ? `<small class="fu" style="color:var(--brass)">Próxima sessão: ${fd(nxt.starts_at)}</small>` : ''}</div><div class="acts" style="margin:0">${l.phone ? `<button class="pri cw" data-id="${l.id}">WhatsApp</button>` : ''}<button class="co" data-id="${l.id}">Abrir</button></div></div>`).join('') || '<p class="empty">Nenhum cliente encontrado.</p>';
+    document.querySelectorAll('.cw').forEach(b => b.onclick = () => window.open(waLink(leads.find(x => x.id === b.dataset.id), CFG.msgReativar)));
+    document.querySelectorAll('.co').forEach(b => b.onclick = () => openLead(b.dataset.id));
+  };
+  $('#cq').oninput = draw; $('#cm').onchange = draw; $('#cadv').onclick = () => openLead(null, { stage: 'feito', source: 'indicacao' }); draw();
+}
 const today = () => new Date().toLocaleDateString('sv-SE');
 const posDate = () => { const d = new Date(); d.setDate(d.getDate() + CFG.posDays); return d.toLocaleDateString('sv-SE'); };
 const waLink = (l, fn) => { let n = (l.phone || '').replace(/\D/g, ''); if (n.length <= 11) n = '55' + n; return 'https://wa.me/' + n + '?text=' + encodeURIComponent(fn((l.name || '').split(' ')[0])); };
 async function setApStatus(apId, status) {
   await sb.from('appointments').update({ status }).eq('id', apId);
   const ap = appts.find(x => x.id === apId);
-  if (status === 'feito' && ap) await sb.from('leads').update({ stage: 'feito', next_followup: posDate() }).eq('id', ap.lead_id);
+  if (status === 'feito' && ap) await sb.from('leads').update(Date.now() - new Date(ap.starts_at) < 14 * 864e5 ? { stage: 'feito', next_followup: posDate() } : { stage: 'feito' }).eq('id', ap.lead_id);
   await load();
 }
 function render() {
   const n = leads.filter(l => l.next_followup && l.next_followup <= today() && l.stage !== 'perdido').length;
   document.querySelector('[data-t="painel"]').textContent = 'Início' + (n ? ` (${n})` : '');
-  ({ funil: board, agenda, painel })[tab]();
+  ({ funil: board, agenda, painel, clientes })[tab]();
 }
 
 function board() {
@@ -237,8 +259,8 @@ function painel() {
   document.querySelectorAll('[data-go]').forEach(e => e.onclick = () => go('funil'));
 }
 
-async function openLead(id) {
-  const l = leads.find(x => x.id === id) || { details: {}, stage: 'novo', source: 'whatsapp' };
+async function openLead(id, pre = {}) {
+  const l = leads.find(x => x.id === id) || { details: {}, stage: 'novo', source: 'whatsapp', ...pre };
   const d = $('#dlg'); if (d.open) d.close();
   const mine = appts.filter(a => a.lead_id === id).sort((a, b) => b.starts_at.localeCompare(a.starts_at));
   const dt = s => new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -253,6 +275,7 @@ async function openLead(id) {
   <div class="acts"><button class="pri">Salvar</button>${l.phone ? '<button type="button" id="wa">Abrir WhatsApp</button>' : ''}${id ? '<button type="button" class="del" id="rm">Excluir</button>' : ''}<button type="button" id="cl">Fechar</button></div></form>
   ${id ? `<h3 class="sec">Sessões</h3><div>${mine.map(a => `<div class="ap" style="grid-template-columns:100px 1fr 120px"><b>${dt(a.starts_at)}</b><div>${esc([a.professional, a.service].filter(Boolean).join(', ') || 'Sessão')}</div><select data-s2="${a.id}">${opts(CFG.apStatus, a.status)}</select></div>`).join('') || '<p class="empty">Nenhuma sessão marcada.</p>'}</div>
   <label>${mine.length ? 'Agendar nova sessão' : 'Agendar a primeira sessão'}</label>
+  <small class="hint" style="margin:-2px 0 6px">Para registrar uma sessão que já aconteceu, escolha uma data passada.</small>
   <div class="row"><input id="ad" type="datetime-local"><select id="ap">${opts(CFG.professionals, l.professional)}</select></div>
   <div class="row" style="margin-top:8px"><input id="as" placeholder="O que será feito (ex.: sessão 2 do braço)"><button class="pri" id="ab">Agendar sessão</button></div>
   <h3 class="sec">Anotações</h3><div id="nt"></div><div class="row" style="margin-top:8px"><input id="nn" placeholder="Escreva uma anotação"><button id="na">Adicionar</button></div>` : ''}`;
@@ -285,8 +308,10 @@ async function openLead(id) {
   $('#na').onclick = async () => { const t = $('#nn').value.trim(); if (!t) return; await sb.from('interactions').insert({ lead_id: id, text: t }); $('#nn').value = ''; notes(); };
   $('#ab').onclick = async () => {
     if (!$('#ad').value) { alert('Escolha a data e a hora.'); return; }
-    await sb.from('appointments').insert({ lead_id: id, starts_at: new Date($('#ad').value).toISOString(), professional: $('#ap').value || null, service: $('#as').value || null });
-    if (['novo', 'conversando', 'orcamento', 'sinal', 'feito', 'perdido'].includes(l.stage)) await sb.from('leads').update({ stage: 'agendado' }).eq('id', id);
+    const when = new Date($('#ad').value), past = when < new Date();
+    await sb.from('appointments').insert({ lead_id: id, starts_at: when.toISOString(), professional: $('#ap').value || null, service: $('#as').value || null, status: past ? 'feito' : 'agendado' });
+    if (!past && ['novo', 'conversando', 'orcamento', 'sinal', 'feito', 'perdido'].includes(l.stage)) await sb.from('leads').update({ stage: 'agendado' }).eq('id', id);
+    if (past && l.stage !== 'feito') await sb.from('leads').update({ stage: 'feito' }).eq('id', id);
     await load(); openLead(id);
   };
 }
