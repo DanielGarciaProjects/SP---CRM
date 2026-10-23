@@ -25,6 +25,10 @@ header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px
 .brand{display:flex;align-items:center;gap:10px;margin-right:auto;color:inherit;text-decoration:none}
 header h1{font-size:26px}
 .go,.fn div{cursor:pointer}
+.hint{display:block;color:var(--dim);font-size:12px;margin-top:4px}
+.sec{margin-top:22px}
+.due{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
+.due small{display:block;color:var(--dim)}
 .sd{color:var(--dim);font-size:12px;line-height:1.35;margin:-4px 0 10px}
 .fn{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
 .fn div{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 14px;min-width:96px}
@@ -97,8 +101,11 @@ const CFG = {
   won: ['sinal','agendado','feito'],       // etapas que contam como conversão
   sources: [['site','Site'],['instagram','Instagram'],['google','Google Meu Negócio'],['anuncio','Anúncio'],['indicacao','Indicação'],['whatsapp','WhatsApp direto'],['outro','Outro']],
   professionals: ['Daniel Garcia','Aaron Abrego','Troper Art'],
-  fields: [['regiao','Região do corpo'],['tamanho','Tamanho (cm)'],['ideia','Ideia da tatuagem']],
-  apStatus: ['agendado','confirmado','feito','faltou','cancelado']
+  fields: [['ideia','Ideia da tatuagem'],['regiao','Local do corpo']],
+  apStatus: ['agendado','confirmado','feito','faltou','cancelado'],
+  posDays: 7,   // dias depois da sessão para lembrar da mensagem de cicatrização
+  msgPos: n => `Oi, ${n}! Tudo bem? Aqui é do Still Point Tattoo. Passando para saber como está a cicatrização da sua tatuagem. Está tudo certo? Qualquer dúvida, ou se quiser mandar uma foto, estou por aqui.`,
+  msgRetorno: n => `Oi, ${n}! Tudo bem? Aqui é do Still Point Tattoo. Passando para retomar nossa conversa sobre a sua tatuagem. Ainda tem interesse em seguir?`
 };
 // ======================================================================
 if (!CFG.url.startsWith('https://') || CFG.key.length < 20 || CFG.key.startsWith('COLE')) {
@@ -148,7 +155,20 @@ async function load() {
   if (l.error || a.error) { $('#v').innerHTML = '<p class="empty">Não foi possível carregar os dados. Confira a URL e a chave no topo do código.</p>'; return; }
   leads = l.data; appts = a.data; render();
 }
-function render() { ({ funil: board, agenda, painel })[tab](); }
+const today = () => new Date().toLocaleDateString('sv-SE');
+const posDate = () => { const d = new Date(); d.setDate(d.getDate() + CFG.posDays); return d.toLocaleDateString('sv-SE'); };
+const waLink = (l, fn) => { let n = (l.phone || '').replace(/\D/g, ''); if (n.length <= 11) n = '55' + n; return 'https://wa.me/' + n + '?text=' + encodeURIComponent(fn((l.name || '').split(' ')[0])); };
+async function setApStatus(apId, status) {
+  await sb.from('appointments').update({ status }).eq('id', apId);
+  const ap = appts.find(x => x.id === apId);
+  if (status === 'feito' && ap) await sb.from('leads').update({ stage: 'feito', next_followup: posDate() }).eq('id', ap.lead_id);
+  await load();
+}
+function render() {
+  const n = leads.filter(l => l.next_followup && l.next_followup <= today() && l.stage !== 'perdido').length;
+  document.querySelector('[data-t="painel"]').textContent = 'Início' + (n ? ` (${n})` : '');
+  ({ funil: board, agenda, painel })[tab]();
+}
 
 function board() {
   $('#v').innerHTML = '<div class="board">' + CFG.stages.map(([k, n, d]) => {
@@ -168,7 +188,9 @@ function board() {
       if (!l || l.stage === c.dataset.s) return;
       l.stage = c.dataset.s; board();
       if (l.stage === CFG.paidStage) l.deposit_paid = true;
-      const { error } = await sb.from('leads').update(l.stage === CFG.paidStage ? { stage: l.stage, deposit_paid: true } : { stage: l.stage }).eq('id', id);
+      const up = l.stage === CFG.paidStage ? { stage: l.stage, deposit_paid: true } : { stage: l.stage };
+      if (l.stage === 'feito' && !l.next_followup) { up.next_followup = posDate(); l.next_followup = up.next_followup; }
+      const { error } = await sb.from('leads').update(up).eq('id', id);
       if (error) { alert('Não foi possível mover o lead.'); load(); } else if (l.stage === 'agendado') openLead(id);
     };
   });
@@ -187,10 +209,7 @@ function agenda() {
   });
   $('#v').innerHTML = h;
   document.querySelectorAll('[data-ap]').forEach(s => s.onchange = async () => {
-    await sb.from('appointments').update({ status: s.value }).eq('id', s.dataset.ap);
-    const ap = appts.find(x => x.id === s.dataset.ap);
-    if (s.value === 'feito' && ap) await sb.from('leads').update({ stage: 'feito' }).eq('id', ap.lead_id);
-    load();
+    await setApStatus(s.dataset.ap, s.value);
   });
 }
 
@@ -204,29 +223,39 @@ function painel() {
   const prox = fut.slice(0, 8).map(a => { const l = leads.find(x => x.id === a.lead_id); return item(a.lead_id, when(a), l?.name || 'Lead removido', [a.professional, a.service].filter(Boolean).join(', ')); }).join('');
   const src = CFG.sources.map(([k, n]) => { const L = leads.filter(x => x.source === k); return [n, L.length, L.filter(won).length]; }).filter(x => x[1]);
   const max = Math.max(1, ...src.map(x => x[1]));
-  $('#v').innerHTML = `<div class="kpi"><div><b>${t}</b>leads no total</div><div><b>${by('conversando')}</b>conversando</div><div><b>${by('agendado')}</b>agendados</div><div><b>${leads.filter(l => l.deposit_paid || l.stage === CFG.paidStage).length}</b>com sinal pago</div><div><b>${t ? Math.round(100 * w / t) : 0}%</b>de conversão</div></div>
+  const hoje = today(), dueL = leads.filter(l => l.next_followup && l.next_followup <= hoje && l.stage !== 'perdido');
+  const dueHtml = '<h2>Mensagens para enviar</h2>' + (dueL.length ? dueL.map(l => `<div class="due"><div>${esc(l.name)}<small>${l.stage === 'feito' ? 'Pós-atendimento: perguntar da cicatrização' : 'Retomar contato'}${l.next_followup < hoje ? ' (atrasado)' : ''}</small></div><div class="acts" style="margin:0"><button class="pri fw" data-id="${l.id}">WhatsApp</button><button class="fd" data-id="${l.id}">Já enviei</button></div></div>`).join('') : '<p class="empty">Nenhuma mensagem pendente hoje.</p>');
+  $('#v').innerHTML = `${dueHtml}<h2 class="day">Resumo</h2><div class="kpi"><div><b>${t}</b>leads no total</div><div><b>${by('conversando')}</b>conversando</div><div><b>${by('agendado')}</b>agendados</div><div><b>${leads.filter(l => l.deposit_paid || l.stage === CFG.paidStage).length}</b>com sinal pago</div><div><b>${t ? Math.round(100 * w / t) : 0}%</b>de conversão</div></div>
   <div class="fn">${CFG.stages.map(([k, n]) => `<div data-go="1"><b>${by(k)}</b>${esc(n)}</div>`).join('')}</div>
   <p class="empty" style="padding:8px 0 0">Conversão: clientes que chegaram a ${CFG.won.map(k => nm(CFG.stages, k)).join(', ')}, divididos pelo total de leads.</p>
   <h2>Próximos atendimentos</h2>${prox || '<p class="empty">Nenhum atendimento com data marcada.</p>'}
   ${semData.length ? `<h2 class="day">Marcados como Agendado, sem data</h2><p class="empty" style="padding:0 0 8px">Abra o cliente e use "Agendar atendimento" para escolher o dia e a hora. Aí ele entra na lista acima e na aba Agenda.</p>${semData.map(l => item(l.id, 'Sem data', l.name, l.professional)).join('')}` : ''}
   <h2 class="day">De onde vêm os clientes</h2>${src.length ? src.map(([n, c, v]) => `<div style="margin:12px 0;max-width:520px">${esc(n)}: ${c} leads, ${v} convertidos (${Math.round(100 * v / c)}%)<div class="bar" style="width:${100 * c / max}%"></div></div>`).join('') : '<p class="empty">Os números aparecem quando houver leads.</p>'}`;
   document.querySelectorAll('.go').forEach(e => e.onclick = () => openLead(e.dataset.id));
+  document.querySelectorAll('.fw').forEach(b => b.onclick = () => { const l = leads.find(x => x.id === b.dataset.id); if (l.phone) window.open(waLink(l, l.stage === 'feito' ? CFG.msgPos : CFG.msgRetorno)); else alert('Este cliente está sem telefone.'); });
+  document.querySelectorAll('.fd').forEach(b => b.onclick = async () => { await sb.from('leads').update({ next_followup: null }).eq('id', b.dataset.id); load(); });
   document.querySelectorAll('[data-go]').forEach(e => e.onclick = () => go('funil'));
 }
 
 async function openLead(id) {
   const l = leads.find(x => x.id === id) || { details: {}, stage: 'novo', source: 'whatsapp' };
-  const d = $('#dlg');
+  const d = $('#dlg'); if (d.open) d.close();
+  const mine = appts.filter(a => a.lead_id === id).sort((a, b) => b.starts_at.localeCompare(a.starts_at));
+  const dt = s => new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   d.innerHTML = `<form id="lf"><h2>${id ? esc(l.name) : 'Novo lead'}</h2>
   <label>Nome</label><input name="name" required maxlength="120" value="${esc(l.name)}">
-  <div class="row"><div><label>Telefone</label><input name="phone" value="${esc(l.phone)}"></div><div><label>E-mail</label><input name="email" type="email" value="${esc(l.email)}"></div></div>
-  <div class="row"><div><label>Origem</label><select name="source">${opts(CFG.sources, l.source)}</select></div><div><label>Etapa</label><select name="stage">${opts(CFG.stages, l.stage)}</select></div></div>
-  <div class="row"><div><label>Profissional</label><select name="professional">${opts(CFG.professionals, l.professional, 1)}</select></div><div><label>Valor orçado (R$)</label><input name="quoted_value" type="number" step="0.01" value="${l.quoted_value ?? ''}"></div></div>
-  <div class="row"><div><label>Retornar em</label><input name="next_followup" type="date" value="${l.next_followup || ''}"></div><div><label>Sinal</label><select name="deposit_paid"><option value="false">Não pago</option><option value="true" ${l.deposit_paid ? 'selected' : ''}>Pago</option></select></div></div>
+  <div class="row"><div><label>WhatsApp</label><input name="phone" value="${esc(l.phone)}"></div><div><label>E-mail (opcional)</label><input name="email" type="email" maxlength="160" value="${esc(l.email)}"></div></div>
   ${CFG.fields.map(([k, n]) => `<label>${esc(n)}</label><input data-f="${k}" value="${esc(l.details[k])}">`).join('')}
-  <div class="acts"><button class="pri">Salvar</button>${l.phone ? `<button type="button" id="wa">Abrir WhatsApp</button>` : ''}${id ? '<button type="button" class="del" id="rm">Excluir</button>' : ''}<button type="button" id="cl">Fechar</button></div></form>
-  ${id ? `<h3 style="margin-top:22px">Anotações</h3><div id="nt"></div><div class="row" style="margin-top:8px"><input id="nn" placeholder="Escreva uma anotação"><button id="na">Adicionar</button></div>
-  <h3 style="margin-top:22px">Agendar atendimento</h3><div class="row"><input id="ad" type="datetime-local"><select id="ap">${opts(CFG.professionals, l.professional)}</select></div><div class="row" style="margin-top:8px"><input id="as" placeholder="Serviço"><button id="ab">Agendar</button></div>` : ''}`;
+  <div class="row"><div><label>Origem</label><select name="source">${opts(CFG.sources, l.source)}</select></div><div><label>Tatuador</label><select name="professional">${opts(CFG.professionals, l.professional, 1)}</select></div></div>
+  <div class="row"><div><label>Etapa</label><select name="stage">${opts(CFG.stages, l.stage)}</select></div><div><label>Sinal</label><select name="deposit_paid"><option value="false">Não pago</option><option value="true" ${l.deposit_paid ? 'selected' : ''}>Pago</option></select></div></div>
+  <div class="row"><div><label>Valor orçado (R$)</label><input name="quoted_value" type="number" step="0.01" value="${l.quoted_value ?? ''}"></div><div><label>Lembrete de mensagem (opcional)</label><input name="next_followup" type="date" value="${l.next_followup || ''}"></div></div>
+  <small class="hint">O lembrete não é o dia da tatuagem. É o dia em que o CRM te avisa, na tela Início, para falar com o cliente.</small>
+  <div class="acts"><button class="pri">Salvar</button>${l.phone ? '<button type="button" id="wa">Abrir WhatsApp</button>' : ''}${id ? '<button type="button" class="del" id="rm">Excluir</button>' : ''}<button type="button" id="cl">Fechar</button></div></form>
+  ${id ? `<h3 class="sec">Sessões</h3><div>${mine.map(a => `<div class="ap" style="grid-template-columns:100px 1fr 120px"><b>${dt(a.starts_at)}</b><div>${esc([a.professional, a.service].filter(Boolean).join(', ') || 'Sessão')}</div><select data-s2="${a.id}">${opts(CFG.apStatus, a.status)}</select></div>`).join('') || '<p class="empty">Nenhuma sessão marcada.</p>'}</div>
+  <label>${mine.length ? 'Agendar nova sessão' : 'Agendar a primeira sessão'}</label>
+  <div class="row"><input id="ad" type="datetime-local"><select id="ap">${opts(CFG.professionals, l.professional)}</select></div>
+  <div class="row" style="margin-top:8px"><input id="as" placeholder="O que será feito (ex.: sessão 2 do braço)"><button class="pri" id="ab">Agendar sessão</button></div>
+  <h3 class="sec">Anotações</h3><div id="nt"></div><div class="row" style="margin-top:8px"><input id="nn" placeholder="Escreva uma anotação"><button id="na">Adicionar</button></div>` : ''}`;
   d.showModal();
   $('#cl').onclick = () => d.close();
   if ($('#wa')) $('#wa').onclick = () => { let n = l.phone.replace(/\D/g, ''); if (n.length <= 11) n = '55' + n; window.open('https://wa.me/' + n); };
@@ -237,7 +266,8 @@ async function openLead(id) {
     if (row.deposit_paid && CFG.beforePaid.includes(row.stage)) row.stage = CFG.paidStage;
     if (row.stage === CFG.paidStage) row.deposit_paid = true;
     row.quoted_value = row.quoted_value === '' ? null : Number(row.quoted_value);
-    row.next_followup = row.next_followup || null; row.professional = row.professional || null;
+    row.next_followup = row.next_followup || null; row.professional = row.professional || null; row.email = row.email || null;
+    if (row.stage === 'feito' && !row.next_followup && l.stage !== 'feito') row.next_followup = posDate();
     row.details = Object.fromEntries([...d.querySelectorAll('[data-f]')].map(i => [i.dataset.f, i.value]));
     row.consent = id ? l.consent : true;
     const { error } = id ? await sb.from('leads').update(row).eq('id', id) : await sb.from('leads').insert(row);
@@ -245,7 +275,8 @@ async function openLead(id) {
     d.close(); load();
   };
   if (!id) return;
-  $('#rm').onclick = async () => { if (confirm('Excluir este lead e todo o histórico dele?')) { await sb.from('leads').delete().eq('id', id); d.close(); load(); } };
+  $('#rm').onclick = async () => { if (confirm('Excluir este cliente e todo o histórico dele?')) { await sb.from('leads').delete().eq('id', id); d.close(); load(); } };
+  d.querySelectorAll('[data-s2]').forEach(s => s.onchange = async () => { await setApStatus(s.dataset.s2, s.value); openLead(id); });
   const notes = async () => {
     const { data } = await sb.from('interactions').select('*').eq('lead_id', id).order('created_at', { ascending: false });
     $('#nt').innerHTML = (data || []).map(n => `<div class="note">${esc(n.text)}<br><small>${new Date(n.created_at).toLocaleString('pt-BR')}</small></div>`).join('') || '<p class="empty">Nenhuma anotação ainda.</p>';
@@ -255,8 +286,8 @@ async function openLead(id) {
   $('#ab').onclick = async () => {
     if (!$('#ad').value) { alert('Escolha a data e a hora.'); return; }
     await sb.from('appointments').insert({ lead_id: id, starts_at: new Date($('#ad').value).toISOString(), professional: $('#ap').value || null, service: $('#as').value || null });
-    if (['novo', 'conversando', 'orcamento', 'sinal'].includes(l.stage)) await sb.from('leads').update({ stage: 'agendado' }).eq('id', id);
-    $('#ad').value = ''; $('#as').value = ''; await load(); alert('Atendimento agendado. Veja na aba Agenda.');
+    if (['novo', 'conversando', 'orcamento', 'sinal', 'feito', 'perdido'].includes(l.stage)) await sb.from('leads').update({ stage: 'agendado' }).eq('id', id);
+    await load(); openLead(id);
   };
 }
 boot();
